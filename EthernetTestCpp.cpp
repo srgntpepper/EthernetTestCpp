@@ -28,7 +28,7 @@ static unordered_map<wstring, wstring> list_ip_addresses() {
     if (GetAdaptersAddresses(AF_UNSPEC, 0, nullptr, adapterAddresses, &bufferSize) != NO_ERROR) {
         cerr << "Error getting network interfaces" << endl;
         free(adapterAddresses);
-        return;
+        return ipAdresses;
     }
 
     // Iterate through the linked list of adapter addresses
@@ -93,7 +93,7 @@ int main()
         //user wants to exit
         if (selection == 100) {
             WSACleanup();
-            exit;
+            exit(1);
         }
         //user input incorrect values
         else if (selection < 1 || selection >= index) {
@@ -112,6 +112,9 @@ int main()
         cin >> port;
         if (!isdigit(port)) {
             cout << "Not a digit, try again or type exit" << endl;
+        }
+        else {
+            break;
         }
 
     }
