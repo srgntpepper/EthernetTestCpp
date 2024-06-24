@@ -13,8 +13,62 @@
 
 using namespace std;
 
-void try_connecting_ip(const wstring ip) {
+bool try_connecting_ip(const wstring ip, int port, SOCKET sock) {
     wcout << L"Attempting to connect to " << ip << L". . ." << endl;
+
+    struct sockaddr_in device;
+    device.sin_family = AF_INET;
+    device.sin_port = htons(port);
+
+    char ip_char[NI_MAXHOST];
+    wcstombs(ip_char, ip.c_str(), ip.length() + 1);
+
+    inet_pton(AF_INET, ip_char, &device.sin_addr);
+
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == INVALID_SOCKET) {
+        cerr << "Could not create socket: " << WSAGetLastError() << endl;
+        return false;
+    }
+
+    if (connect(sock, (struct sockaddr*)&device, sizeof(device)) < 0) {
+        cerr << "Connection failed: " << WSAGetLastError() << endl;
+        closesocket(sock);
+        return false;
+    }
+    return true;
+}
+
+int GetValidPort() {
+    int port = 0;
+    while (true) {
+        cout << "Enter a port address (or type 'exit' to quit): ";
+        string input;
+        cin >> input;
+        if (input == "exit" || input == "e") {
+            exit(1);
+        }
+        try {
+            //attempt to convert input to an int
+            port = stoi(input);
+
+            //Check if it is within a valid range (0 - 65535)
+            if (port > 0 && port <= 65535) {
+                break;
+            }
+            else {
+                cerr << "Port number must be within range. Please try again" << endl;
+            }
+        }
+        catch (const invalid_argument&) {
+            cerr << "Invalid input. Please enter a valid port number or exit" << endl;
+        }
+        catch (const out_of_range&) {
+            cerr << "Port number out of range." << endl;
+        }
+
+    }
+    return port;
 }
 
 static unordered_map<wstring, wstring> list_ip_addresses() {
@@ -53,6 +107,18 @@ static unordered_map<wstring, wstring> list_ip_addresses() {
 
     //return map
     return ipAdresses;
+}
+
+void SendCommand(SOCKET& sock, string command) {
+    char buffer[1024];
+
+    send(sock, command.c_str(), command.size(), 0);
+
+    int bytesReceived = recv(sock, buffer, sizeof(buffer), 0);
+    if (bytesReceived > 0) {
+        buffer[bytesReceived] = '\0';
+        cout << "Response: " << buffer << endl;
+    }
 }
 
 int main()
@@ -97,7 +163,7 @@ int main()
         }
         //user input incorrect values
         else if (selection < 1 || selection >= index) {
-            cerr << "Invalid selection. Please try again or type 100 to exit";
+            cerr << "\nInvalid selection. Please try again or type 100 to exit";
         }
         //selection should be good
         else {
@@ -106,22 +172,30 @@ int main()
     }
 
     SOCKET sock;
-    int port = 0;
-    while (true) {
-        cout << "Enter a port address: ";
-        cin >> port;
-        if (!isdigit(port)) {
-            cout << "Not a digit, try again or type exit" << endl;
+    int port = GetValidPort();
+    
+    if (!try_connecting_ip(ips[selection], port, sock)) {
+        char answer;
+        cout << "Unable to connect, try again? (y/n): ";
+        cin >> answer;
+        if (tolower(answer) == 'n') {
+            exit(1);
         }
-        else {
+    }
+
+    while (true) {
+        cout << "Send a command or 'exit':" << endl;
+        string command;
+        cin >> command;
+
+        if (command == "exit" || command == "e") {
             break;
         }
 
+        SendCommand(sock, command);
     }
-    try_connecting_ip(ips[selection]);
-
-
-
+    
+    closesocket(sock);
 
     //clean up Winsock
     WSACleanup();
