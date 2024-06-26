@@ -7,6 +7,7 @@
 #include <WS2tcpip.h>
 #include <unordered_map>
 #include <string>
+#include <sstream>
 
 #pragma comment(lib, "Ws2_32.lib")
 #pragma comment(lib, "Iphlpapi.lib")
@@ -21,10 +22,24 @@ bool try_connecting_ip(const wstring ip, int port, SOCKET sock) {
     device.sin_port = htons(port);
 
     char ip_char[NI_MAXHOST];
-    wcstombs(ip_char, ip.c_str(), ip.length() + 1);
+    size_t convertedChars = 0;
 
-    inet_pton(AF_INET, ip_char, &device.sin_addr);
+    errno_t err = wcstombs_s(&convertedChars, ip_char, sizeof(ip_char), ip.c_str(), ip.length());
+    if (err != 0) {
+        cerr << "Error converting IP address: " << err << endl;
+        return false;
+    }
 
+    int conv_res = inet_pton(AF_INET, ip_char, &device.sin_addr);
+
+    if (conv_res <= 0) {
+        if (conv_res == 0) {
+            cerr << "inet_pton: Invalid address format" << endl;
+        }
+        else {
+            cerr << "inet_pton error occurred" << endl;
+        }
+    }
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock == INVALID_SOCKET) {
         cerr << "Could not create socket: " << WSAGetLastError() << endl;
@@ -171,15 +186,20 @@ int main()
         }
     }
 
-    SOCKET sock;
+    SOCKET sock = INVALID_SOCKET;
     int port = GetValidPort();
     
-    if (!try_connecting_ip(ips[selection], port, sock)) {
-        char answer;
-        cout << "Unable to connect, try again? (y/n): ";
-        cin >> answer;
-        if (tolower(answer) == 'n') {
-            exit(1);
+    while (true) {
+        if (!try_connecting_ip(ips[selection], port, sock)) {
+            char answer;
+            cout << "Unable to connect, try again? (y/n): ";
+            cin >> answer;
+            if (tolower(answer) == 'n') {
+                exit(1);
+            }
+        }
+        else {
+            break;
         }
     }
 
