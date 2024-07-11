@@ -14,7 +14,81 @@
 
 using namespace std;
 
-bool try_connecting_ip(const wstring ip, int port, SOCKET sock) {
+bool get_connected_device_ip(const wstring& local_ip, wstring& device_ip) {
+    ULONG macAddr[2];
+    ULONG macAddrLen = 6;
+    sockaddr_in srcAddr;
+    srcAddr.sin_family = AF_INET;
+
+    char ip_char[NI_MAXHOST];
+    size_t convertedChars = 0;
+
+    errno_t err = wcstombs_s(&convertedChars, ip_char, sizeof(ip_char), local_ip.c_str(), local_ip.length());
+    if (err != 0) {
+        cerr << "Error converting IP address: " << err << endl;
+        return false;
+    }
+
+    int conv_res = inet_pton(AF_INET, ip_char, &srcAddr.sin_addr);
+
+    if (conv_res <= 0) {
+        if (conv_res == 0) {
+            cerr << "inet_pton: Invalid address format" << endl;
+        }
+        else {
+            perror("inet_pton");
+        }
+        return false;
+    }
+
+    // ARP request
+    if (SendARP((IPAddr)srcAddr.sin_addr.s_addr, 0, macAddr, &macAddrLen) == NO_ERROR) {
+        // Convert the retrieved MAC address to a string
+        BYTE* bMacAddr = reinterpret_cast<BYTE*>(&macAddr);
+        char strMacAddr[18];
+        sprintf_s(strMacAddr, "%02X:%02X:%02X:%02X:%02X:%02X", bMacAddr[0], bMacAddr[1], bMacAddr[2], bMacAddr[3], bMacAddr[4], bMacAddr[5]);
+
+        cout << "MAC Address: " << strMacAddr << endl;
+
+        // Retrieve IP address from ARP cache
+        ULONG ulOutBufLen = sizeof(MIB_IPNETTABLE);
+        PMIB_IPNETTABLE pIpNetTable = (PMIB_IPNETTABLE)malloc(ulOutBufLen);
+        if (GetIpNetTable(pIpNetTable, &ulOutBufLen, 0) == ERROR_INSUFFICIENT_BUFFER) {
+            free(pIpNetTable);
+            pIpNetTable = (PMIB_IPNETTABLE)malloc(ulOutBufLen);
+        }
+
+        if (GetIpNetTable(pIpNetTable, &ulOutBufLen, 0) == NO_ERROR) {
+            for (int i = 0; i < (int)pIpNetTable->dwNumEntries; i++) {
+                printf("ARP Entry: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                    pIpNetTable->table[i].bPhysAddr[0], pIpNetTable->table[i].bPhysAddr[1],
+                    pIpNetTable->table[i].bPhysAddr[2], pIpNetTable->table[i].bPhysAddr[3],
+                    pIpNetTable->table[i].bPhysAddr[4], pIpNetTable->table[i].bPhysAddr[5]);
+
+                if (memcmp(pIpNetTable->table[i].bPhysAddr, bMacAddr, macAddrLen) == 0) {
+                    struct in_addr ipAddr;
+                    ipAddr.S_un.S_addr = (u_long)pIpNetTable->table[i].dwAddr;
+                    wchar_t wIpAddrStr[INET_ADDRSTRLEN];
+
+                    if (InetNtop(AF_INET, &ipAddr, wIpAddrStr, INET_ADDRSTRLEN) != NULL) {
+                        device_ip = wIpAddrStr;
+                        free(pIpNetTable);
+                        return true;
+                    }
+                    else {
+                        cerr << "InetNtop failed." << endl;
+                    }
+                }
+            }
+        }
+        free(pIpNetTable);
+    }
+
+    cerr << "Failed to retrieve the MAC address or IP address." << endl;
+    return false;
+}
+
+bool try_connecting_ip(const wstring ip, int port, SOCKET& sock) {
     wcout << L"Attempting to connect to " << ip << L". . ." << endl;
 
     struct sockaddr_in device;
@@ -30,7 +104,8 @@ bool try_connecting_ip(const wstring ip, int port, SOCKET sock) {
         return false;
     }
 
-    int conv_res = inet_pton(AF_INET, ip_char, &device.sin_addr);
+    //int conv_res = inet_pton(AF_INET, ip_char, &device.sin_addr);
+    int conv_res = inet_pton(AF_INET, "169.254.0.6", &device.sin_addr); //Need to impliment dynamic way to entering device_ip
 
     if (conv_res <= 0) {
         if (conv_res == 0) {
@@ -39,7 +114,9 @@ bool try_connecting_ip(const wstring ip, int port, SOCKET sock) {
         else {
             cerr << "inet_pton error occurred" << endl;
         }
+        return false;
     }
+
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock == INVALID_SOCKET) {
         cerr << "Could not create socket: " << WSAGetLastError() << endl;
@@ -127,12 +204,87 @@ static unordered_map<wstring, wstring> list_ip_addresses() {
 void SendCommand(SOCKET& sock, string command) {
     char buffer[1024];
 
-    send(sock, command.c_str(), command.size(), 0);
+    // Send the command to the device
+    if (send(sock, command.c_str(), command.size(), 0) == -1) {
+        perror("send error");
+        
+        cout << "Error code: " << errno << endl;
+        switch (errno) {
+        case EACCES:
+            cout << "Permission denied." << endl;
+            break;
+        case EAFNOSUPPORT:
+            cout << "Address family not supported by protocol." << endl;
+            break;
+        case EAGAIN:
+            cout << "Resource temporarily unavailable." << endl;
+            break;
+        case EBADF:
+            cout << "Bad file descriptor." << endl;
+            break;
+        case ECONNRESET:
+            cout << "Connection reset by peer." << endl;
+            break;
+        case EDESTADDRREQ:
+            cout << "Destination address required." << endl;
+            break;
+        case EFAULT:
+            cout << "Bad address." << endl;
+            break;
+        case EINTR:
+            cout << "Interrupted function call." << endl;
+            break;
+        case EINVAL:
+            cout << "Invalid argument." << endl;
+            break;
+        case EISCONN:
+            cout << "Socket is connected." << endl;
+            break;
+        case EMSGSIZE:
+            cout << "Message too long." << endl;
+            break;
+        case ENETDOWN:
+            cout << "Network is down." << endl;
+            break;
+        case ENETUNREACH:
+            cout << "Network is unreachable." << endl;
+            break;
+        case ENOBUFS:
+            cout << "No buffer space available." << endl;
+            break;
+        case ENOMEM:
+            cout << "Not enough space." << endl;
+            break;
+        case ENOTCONN:
+            cout << "The socket is not connected." << endl;
+            break;
+        case ENOTSOCK:
+            cout << "Not a socket." << endl;
+            break;
+        case EOPNOTSUPP:
+            cout << "Operation not supported." << endl;
+            break;
+        case EPIPE:
+            cout << "Broken pipe." << endl;
+            break;
+        default:
+            cout << "Unknown error." << endl;
+        }
+        return;
+    }
 
-    int bytesReceived = recv(sock, buffer, sizeof(buffer), 0);
+    int bytesReceived = recv(sock, buffer, sizeof(buffer) - 1, 0);
     if (bytesReceived > 0) {
         buffer[bytesReceived] = '\0';
         cout << "Response: " << buffer << endl;
+    } else {
+        perror("recv");
+        cout << "Error code: " << errno << endl;
+        if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            cout << "The socket is in non-blocking mode and no data is available to read right now." << endl;
+        } else {
+            cout << "An error occurred while receiving data." << endl;
+        }
     }
 }
 
@@ -168,8 +320,8 @@ int main()
     //prompt user for a selection
     while (true) {
 
-        wcout << L"Enter the number corresponding to the IP Address you wish to connect to: ";
-        wcin >> selection;
+        cout << "Enter the number corresponding to the IP Address you wish to connect to: ";
+        cin >> selection;
 
         //user wants to exit
         if (selection == 100) {
@@ -188,13 +340,19 @@ int main()
 
     SOCKET sock = INVALID_SOCKET;
     int port = GetValidPort();
+
+    wstring device_ip;
+    if (get_connected_device_ip(ips[selection], device_ip)) {
+        wcout << L"Device IP: " << device_ip << endl;
+    }
     
     while (true) {
-        if (!try_connecting_ip(ips[selection], port, sock)) {
+        if (!try_connecting_ip(device_ip, port, sock)) {
             char answer;
             cout << "Unable to connect, try again? (y/n): ";
             cin >> answer;
             if (tolower(answer) == 'n') {
+                WSACleanup();
                 exit(1);
             }
         }
@@ -212,7 +370,7 @@ int main()
             break;
         }
 
-        SendCommand(sock, command);
+        SendCommand(sock, command+"\r");
     }
     
     closesocket(sock);
