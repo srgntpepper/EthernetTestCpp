@@ -283,7 +283,29 @@ void SendCommand(SOCKET& sock, string command) {
         if (errno == EWOULDBLOCK || errno == EAGAIN) {
             cout << "The socket is in non-blocking mode and no data is available to read right now." << endl;
         } else {
-            cout << "An error occurred while receiving data." << endl;
+            switch (errno) {
+            case ECONNRESET:
+                std::cerr << "Connection reset by peer" << std::endl;
+                break;
+            case EAGAIN:
+            case EWOULDBLOCK:
+                std::cerr << "Resource temporarily unavailable (non-blocking mode)" << std::endl;
+                break;
+            case EBADF:
+                std::cerr << "Bad file descriptor" << std::endl;
+                break;
+            case ECONNREFUSED:
+                std::cerr << "Connection refused" << std::endl;
+                break;
+            case EINTR:
+                std::cerr << "Interrupted system call" << std::endl;
+                break;
+            case ENETDOWN:
+                std::cerr << "Network interface is down" << std::endl;
+                break;
+            default:
+                std::cerr << "Unknown error: " << errno << std::endl;
+            }
         }
     }
 }
